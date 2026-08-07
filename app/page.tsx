@@ -1,5 +1,5 @@
-import { SoundSeedStudio } from "./SoundSeedStudio";
+import { BeatFoundry } from "./BeatFoundry";
 
 export default function Home() {
-  return <SoundSeedStudio />;
+  return <BeatFoundry />;
 }

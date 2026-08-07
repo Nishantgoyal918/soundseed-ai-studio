@@ -7,8 +7,8 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = incomingHeaders.get("x-forwarded-host") ?? incomingHeaders.get("host") ?? "localhost:3000";
   const protocol = incomingHeaders.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
   const image = `${protocol}://${host}/og.png`;
-  const title = "SoundSeed — Watch a sound become a song";
-  const description = "Record one ordinary sound, then watch it become an explainable, editable musical arrangement one layer at a time.";
+  const title = "SoundSeed — Build every instrument from one beat";
+  const description = "Record a few messy impacts, isolate one clean hit, tune its pitch, and derive drums, bass and synth loops from that single sonic seed.";
 
   return {
     title,
