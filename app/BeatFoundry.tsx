@@ -15,6 +15,16 @@ type SoundDNA = {
 type InstrumentId = "foundation" | "kick" | "clap" | "hat" | "bass" | "synth";
 type Groove = "straight" | "pocket" | "sparse";
 type SynthShape = "pluck" | "pad" | "arp";
+type ArrangementPlan = {
+  bars: number;
+  seed_repetitions: number;
+  bpm: number;
+  groove: Groove;
+  synth_shape: SynthShape;
+  instruments: Array<Exclude<InstrumentId, "foundation">>;
+  patterns: Record<InstrumentId, number[]>;
+  explanation: string;
+};
 type Layer = {
   id: InstrumentId;
   name: string;
@@ -163,6 +173,11 @@ function patternFor(id: InstrumentId, groove: Groove, synthShape: SynthShape): n
   return synthShape === "pad" ? [0, 8] : synthShape === "arp" ? [0, 3, 6, 9, 12, 15] : [0, 4, 7, 11, 14];
 }
 
+function repetitionPattern(count: number) {
+  const safeCount = clamp(Math.round(count), 1, 12);
+  return Array.from(new Set(Array.from({ length: safeCount }, (_, index) => Math.floor((index * 16) / safeCount))));
+}
+
 function Wave({ values, color, active = false }: { values: number[]; color: string; active?: boolean }) {
   return <div className={`waveform ${active ? "waveform--active" : ""}`}>{values.map((value, index) => <i key={index} style={{ height: `${Math.max(7, value * 92)}%`, background: color, animationDelay: `${-index * 0.018}s` }} />)}</div>;
 }
@@ -192,6 +207,13 @@ export function BeatFoundry() {
   const [pitch, setPitch] = useState(0);
   const [groove, setGroove] = useState<Groove>("pocket");
   const [synthShape, setSynthShape] = useState<SynthShape>("pluck");
+  const [brief, setBrief] = useState("Make it 4 bars at 108 BPM. Repeat the seed 5 times per bar, add a deep kick, bass and a warm pad. Keep it spacious.");
+  const [loopBars, setLoopBars] = useState(4);
+  const [seedRepetitions, setSeedRepetitions] = useState(5);
+  const [tempo, setTempo] = useState(100);
+  const [customPatterns, setCustomPatterns] = useState<Partial<Record<InstrumentId, number[]>>>({});
+  const [planning, setPlanning] = useState(false);
+  const [planError, setPlanError] = useState("");
   const [layers, setLayers] = useState<Layer[]>([]);
   const [solo, setSolo] = useState<InstrumentId | null>(null);
   const [audition, setAudition] = useState<InstrumentId | null>(null);
@@ -224,6 +246,9 @@ export function BeatFoundry() {
   const soloRef = useRef<InstrumentId | null>(null);
   const auditionRef = useRef<InstrumentId | null>(null);
   const bpmRef = useRef(100);
+  const barsRef = useRef(4);
+  const repetitionsRef = useRef(5);
+  const customPatternsRef = useRef<Partial<Record<InstrumentId, number[]>>>({});
 
   useEffect(() => { layersRef.current = layers; }, [layers]);
   useEffect(() => { pitchRef.current = pitch; }, [pitch]);
@@ -231,7 +256,10 @@ export function BeatFoundry() {
   useEffect(() => { synthRef.current = synthShape; }, [synthShape]);
   useEffect(() => { soloRef.current = solo; }, [solo]);
   useEffect(() => { auditionRef.current = audition; }, [audition]);
-  useEffect(() => { bpmRef.current = dna?.bpm ?? 100; }, [dna]);
+  useEffect(() => { bpmRef.current = tempo; }, [tempo]);
+  useEffect(() => { barsRef.current = loopBars; }, [loopBars]);
+  useEffect(() => { repetitionsRef.current = seedRepetitions; }, [seedRepetitions]);
+  useEffect(() => { customPatternsRef.current = customPatterns; }, [customPatterns]);
 
   const ensureContext = useCallback(async () => {
     if (!contextRef.current || contextRef.current.state === "closed") contextRef.current = new AudioContext();
@@ -263,7 +291,8 @@ export function BeatFoundry() {
   }, []);
 
   const scheduleLayer = useCallback((layer: Layer, currentStep: number, when: number, ctx: BaseAudioContext, destination: AudioNode, buffer: AudioBuffer, sixteenth: number) => {
-    const pattern = patternFor(layer.id, grooveRef.current, synthRef.current);
+    const pattern = customPatternsRef.current[layer.id]
+      ?? (layer.id === "foundation" ? repetitionPattern(repetitionsRef.current) : patternFor(layer.id, grooveRef.current, synthRef.current));
     if (!pattern.includes(currentStep % 16)) return;
     const base = rateFromSemitones(pitchRef.current);
     if (layer.id === "foundation") playSample(ctx, destination, buffer, when, base, 0.27, sixteenth * 1.45);
@@ -304,7 +333,7 @@ export function BeatFoundry() {
         if (focused) audible = audible.filter((layer) => layer.id === focused);
         audible.forEach((layer) => scheduleLayer(layer, current, nextNote.current, ctx, master, seedBuffer.current!, sixteenth));
         window.setTimeout(() => setStep(current), Math.max(0, (nextNote.current - ctx.currentTime) * 1000));
-        nextNote.current += sixteenth; stepRef.current = (current + 1) % 16;
+        nextNote.current += sixteenth; stepRef.current = (current + 1) % Math.max(16, barsRef.current * 16);
       }
     };
     tick(); scheduler.current = window.setInterval(tick, 25); setPlaying(true);
@@ -322,8 +351,8 @@ export function BeatFoundry() {
     stop(); setAnalyzing(true); setError(""); await sleep(500);
     const result = analyze(buffer);
     const bestIndex = result.hits.reduce((best, hit, index) => hit.strength > result.hits[best].strength ? index : best, 0);
-    rawBuffer.current = buffer; setDna(result); setSourceName(name); setDuration(buffer.duration); setSelectedHit(bestIndex); setPitch(0); setGroove("pocket"); setSynthShape("pluck");
-    const foundation: Layer = { id: "foundation", name: "The one beat", role: "Foundation loop", derivation: "Cleanest impact · silence removed · original timbre", color: COLORS.foundation, pattern: patternFor("foundation", "pocket", "pluck"), muted: false, removed: false };
+    rawBuffer.current = buffer; setDna(result); setSourceName(name); setDuration(buffer.duration); setSelectedHit(bestIndex); setPitch(0); setGroove("pocket"); setSynthShape("pluck"); setTempo(result.bpm); setLoopBars(4); setSeedRepetitions(5); setCustomPatterns({});
+    const foundation: Layer = { id: "foundation", name: "The one beat", role: "Foundation loop", derivation: "Cleanest impact · silence removed · original timbre", color: COLORS.foundation, pattern: repetitionPattern(5), muted: false, removed: false };
     setLayers([foundation]); layersRef.current = [foundation]; setSolo(null); setAudition(null); setAnalyzing(false);
     const ctx = await ensureContext(); seedBuffer.current = extractHit(ctx, buffer, result.hits[bestIndex].time);
     setDecision(`I found ${result.hits.length} separate impact${result.hits.length === 1 ? "" : "s"}. Hit ${String(bestIndex + 1).padStart(2, "0")} has the cleanest attack, so it becomes the single source for the entire rack.`);
@@ -369,15 +398,59 @@ export function BeatFoundry() {
     playSample(ctx, gain, seedBuffer.current, ctx.currentTime + 0.02, rateFromSemitones(pitch), 0.7, Math.min(0.7, seedBuffer.current.duration / Math.max(0.5, rateFromSemitones(pitch))));
   }, [ensureContext, pitch, playSample]);
 
+  const generateArrangement = useCallback(async () => {
+    if (!dna || brief.trim().length < 4) return;
+    setPlanning(true); setPlanError(""); setDecision("Reading your description and deciding how many times the seed should repeat before the supporting layers enter…");
+    try {
+      const response = await fetch("/api/arrange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: brief,
+          seed: { note: dna.note, bpm: dna.bpm, brightness: dna.brightness, detectedHits: dna.hits.length },
+        }),
+      });
+      const payload = await response.json() as { plan?: ArrangementPlan; error?: string };
+      if (!response.ok || !payload.plan) throw new Error(payload.error || "The arrangement planner could not interpret that description.");
+      const plan = payload.plan;
+      const normalizedPatterns = Object.fromEntries((Object.keys(COLORS) as InstrumentId[]).map((id) => [
+        id,
+        Array.from(new Set((plan.patterns[id] ?? []).map((value) => clamp(Math.round(value), 0, 15)))).sort((a, b) => a - b),
+      ])) as Record<InstrumentId, number[]>;
+      if (normalizedPatterns.foundation.length !== plan.seed_repetitions) normalizedPatterns.foundation = repetitionPattern(plan.seed_repetitions);
+      const foundation: Layer = { id: "foundation", name: "The one beat", role: "Foundation loop", derivation: "AI-counted repetitions · isolated seed only", color: COLORS.foundation, pattern: normalizedPatterns.foundation, muted: false, removed: false };
+      const generatedLayers: Layer[] = plan.instruments.map((id) => {
+        const instrument = INSTRUMENTS.find((item) => item.id === id)!;
+        return {
+          id,
+          name: id === "synth" ? (plan.synth_shape === "pad" ? "Warm pad" : plan.synth_shape === "arp" ? "Seed arp" : "Seed pluck") : instrument.name,
+          role: instrument.role,
+          derivation: instrument.derivation,
+          color: COLORS[id],
+          pattern: normalizedPatterns[id],
+          muted: false,
+          removed: false,
+        };
+      });
+      stop(); setLoopBars(clamp(Math.round(plan.bars), 1, 8)); setSeedRepetitions(clamp(Math.round(plan.seed_repetitions), 1, 12)); setTempo(clamp(Math.round(plan.bpm), 60, 160)); setGroove(plan.groove); setSynthShape(plan.synth_shape); setCustomPatterns(normalizedPatterns);
+      customPatternsRef.current = normalizedPatterns; setLayers([foundation, ...generatedLayers]); layersRef.current = [foundation, ...generatedLayers]; setSolo(null); setAudition(null); setDecision(plan.explanation);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "The arrangement planner failed.";
+      setPlanError(message); setDecision("I couldn’t translate that brief yet. Your existing loop is unchanged—edit the description and try again.");
+    } finally { setPlanning(false); }
+  }, [brief, dna, stop]);
+
   const addInstrument = useCallback(async (id: Exclude<InstrumentId, "foundation">) => {
     const instrument = INSTRUMENTS.find((item) => item.id === id)!;
     const name = id === "synth" ? `${synthShape === "pad" ? "Warm pad" : synthShape === "arp" ? "Seed arp" : "Seed pluck"}` : instrument.name;
-    const layer: Layer = { id, name, role: instrument.role, derivation: instrument.derivation, color: COLORS[id], pattern: patternFor(id, groove, synthShape), muted: false, removed: false };
+    const manualPattern = customPatterns[id]?.length ? customPatterns[id]! : patternFor(id, groove, synthShape);
+    setCustomPatterns((current) => ({ ...current, [id]: manualPattern }));
+    const layer: Layer = { id, name, role: instrument.role, derivation: instrument.derivation, color: COLORS[id], pattern: manualPattern, muted: false, removed: false };
     setLayers((current) => current.some((item) => item.id === id) ? current.map((item) => item.id === id ? layer : item) : [...current, layer]);
     setAudition(id); setDecision(`${name} added. Hear it alone first: every note you hear is the isolated impact replayed at a new rate and filtered for its new role.`);
     if (!playing) await start();
     window.setTimeout(() => { setAudition(null); setDecision(`${name} is now folded into the loop. The ${groove} pattern leaves room around the original beat instead of masking it.`); }, 1450);
-  }, [groove, playing, start, synthShape]);
+  }, [customPatterns, groove, playing, start, synthShape]);
 
   const removeLayer = useCallback((id: InstrumentId) => setLayers((current) => current.map((layer) => layer.id === id ? { ...layer, removed: !layer.removed } : layer)), []);
   const muteLayer = useCallback((id: InstrumentId) => setLayers((current) => current.map((layer) => layer.id === id ? { ...layer, muted: !layer.muted } : layer)), []);
@@ -385,16 +458,20 @@ export function BeatFoundry() {
   const exportLoop = useCallback(async () => {
     if (!seedBuffer.current || !dna) return; setExporting(true);
     try {
-      const seconds = (60 / dna.bpm) * 16; const ctx = new OfflineAudioContext(2, Math.ceil(44100 * seconds), 44100); const master = ctx.createGain(); const compressor = ctx.createDynamicsCompressor(); master.gain.value = 0.82; master.connect(compressor); compressor.connect(ctx.destination);
-      const sixteenth = (60 / dna.bpm) / 4; const active = layers.filter((layer) => !layer.muted && !layer.removed);
+      const seconds = (60 / tempo) * 4 * loopBars; const ctx = new OfflineAudioContext(2, Math.ceil(44100 * seconds), 44100); const master = ctx.createGain(); const compressor = ctx.createDynamicsCompressor(); master.gain.value = 0.82; master.connect(compressor); compressor.connect(ctx.destination);
+      const sixteenth = (60 / tempo) / 4; const active = layers.filter((layer) => !layer.muted && !layer.removed);
       for (let current = 0; current * sixteenth < seconds - 0.2; current += 1) active.forEach((layer) => scheduleLayer(layer, current % 16, current * sixteenth, ctx, master, seedBuffer.current!, sixteenth));
       const rendered = await ctx.startRendering(); const url = URL.createObjectURL(new Blob([encodeWav(rendered)], { type: "audio/wav" })); const link = document.createElement("a"); link.href = url; link.download = "soundseed-one-beat-loop.wav"; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1500);
     } finally { setExporting(false); }
-  }, [dna, layers, scheduleLayer]);
+  }, [dna, layers, loopBars, scheduleLayer, tempo]);
 
   useEffect(() => {
-    setLayers((current) => current.map((layer) => ({ ...layer, pattern: patternFor(layer.id, groove, synthShape), name: layer.id === "synth" ? (synthShape === "pad" ? "Warm pad" : synthShape === "arp" ? "Seed arp" : "Seed pluck") : layer.name })));
-  }, [groove, synthShape]);
+    setLayers((current) => current.map((layer) => ({
+      ...layer,
+      pattern: customPatterns[layer.id] ?? (layer.id === "foundation" ? repetitionPattern(seedRepetitions) : patternFor(layer.id, groove, synthShape)),
+      name: layer.id === "synth" ? (synthShape === "pad" ? "Warm pad" : synthShape === "arp" ? "Seed arp" : "Seed pluck") : layer.name,
+    })));
+  }, [customPatterns, groove, seedRepetitions, synthShape]);
 
   useEffect(() => () => { stop(); if (recordTicker.current !== null) window.clearInterval(recordTicker.current); mediaStream.current?.getTracks().forEach((track) => track.stop()); contextRef.current?.close(); }, [stop]);
 
@@ -405,6 +482,8 @@ export function BeatFoundry() {
     const values = dna?.hits[selectedHit]?.waveform ?? []; const rate = rateFromSemitones(pitch);
     return values.map((_, index) => values[Math.floor(index * rate) % Math.max(1, values.length)] ?? 0);
   }, [dna, pitch, selectedHit]);
+  const displayPattern = (id: InstrumentId) => customPatterns[id]
+    ?? (id === "foundation" ? repetitionPattern(seedRepetitions) : patternFor(id, groove, synthShape));
 
   return <main className="app-shell beat-app">
     <header className="topbar">
@@ -460,16 +539,23 @@ export function BeatFoundry() {
 
       <section className="loop-lab">
         <div className="loop-heading"><div><p className="kicker"><span>04</span> TEACH IT A GROOVE</p><h2>Pick the feel.<br />We place the beat.</h2></div><p>The AI pattern uses your isolated hit as the anchor, then places every requested instrument around it.</p></div>
+        <div className="arrangement-brief">
+          <div className="brief-label"><span>AI ARRANGEMENT BRIEF</span><b>Describe the count, repetitions and layers in ordinary language.</b></div>
+          <textarea value={brief} onChange={(event) => setBrief(event.target.value)} maxLength={700} aria-label="Describe the arrangement you want" placeholder="Example: Make an 8-bar loop at 116 BPM. Repeat my beat 6 times per bar, add kick and bass, then bring in an airy synth. Keep it sparse." />
+          <div className="brief-footer"><div><span>{brief.length}/700</span><small>OPENAI · GPT-5.6 SOL</small></div><button onClick={generateArrangement} disabled={planning || brief.trim().length < 4}>{planning ? "Planning the loop…" : "Generate arrangement"}<span>→</span></button></div>
+          {planError && <p className="plan-error" role="alert">{planError}</p>}
+          <div className="plan-readout"><div><small>BARS</small><strong>{loopBars}</strong></div><div><small>SEED REPEATS / BAR</small><strong>{seedRepetitions}</strong></div><div><small>TEMPO</small><strong>{tempo}</strong><span>BPM</span></div><div><small>ACTIVE LAYERS</small><strong>{layers.filter((layer) => !layer.removed).length}</strong></div><div className="bar-map"><small>ARRANGEMENT LENGTH</small><span>{Array.from({ length: loopBars }, (_, index) => <i key={index}>BAR {index + 1}</i>)}</span></div></div>
+        </div>
         <div className="groove-picker">{(["straight", "pocket", "sparse"] as Groove[]).map((option) => <button key={option} className={groove === option ? "active" : ""} onClick={() => { setGroove(option); setDecision(`${option[0].toUpperCase() + option.slice(1)} groove selected. I recalculated every loop position while keeping the same isolated hit underneath.`); }}><span>{option === "straight" ? "● · · · ● · · ·" : option === "pocket" ? "● · · ● · · · ●" : "● · · · · · · ·"}</span><b>{option}</b><small>{option === "straight" ? "Even & steady" : option === "pocket" ? "Human & syncopated" : "Open & minimal"}</small></button>)}</div>
         <div className="rack-heading"><div><span>INSTRUMENT RACK</span><strong>What should this one beat become?</strong></div><div className="synth-shape"><span>SYNTH SHAPE</span>{(["pluck", "pad", "arp"] as SynthShape[]).map((shape) => <button key={shape} className={synthShape === shape ? "active" : ""} onClick={() => setSynthShape(shape)}>{shape}</button>)}</div></div>
-        <div className="instrument-rack">{INSTRUMENTS.map((instrument) => { const added = layers.some((layer) => layer.id === instrument.id && !layer.removed); return <article key={instrument.id} className={added ? "added" : ""}><span className="instrument-number">{instrument.number}</span><div className={`instrument-icon icon-${instrument.id}`}><i /><i /><i /><i /></div><small>{instrument.role}</small><strong>{instrument.id === "synth" ? `${synthShape} synth` : instrument.name}</strong><p>{instrument.derivation}</p><code>{patternFor(instrument.id, groove, synthShape).map((beat) => beat + 1).join(" · ")}</code><button onClick={() => addInstrument(instrument.id)}>{added ? "Rebuild layer" : "+ Add to loop"}</button></article>; })}</div>
+        <div className="instrument-rack">{INSTRUMENTS.map((instrument) => { const added = layers.some((layer) => layer.id === instrument.id && !layer.removed); return <article key={instrument.id} className={added ? "added" : ""}><span className="instrument-number">{instrument.number}</span><div className={`instrument-icon icon-${instrument.id}`}><i /><i /><i /><i /></div><small>{instrument.role}</small><strong>{instrument.id === "synth" ? `${synthShape} synth` : instrument.name}</strong><p>{instrument.derivation}</p><code>{displayPattern(instrument.id).length ? displayPattern(instrument.id).map((beat) => beat + 1).join(" · ") : "AI left this layer empty"}</code><button onClick={() => addInstrument(instrument.id)}>{added ? "Rebuild layer" : "+ Add to loop"}</button></article>; })}</div>
       </section>
 
       <section className="loop-console">
-        <div className="console-top"><div><p className="kicker"><span>05</span> ONE-SEED ARRANGEMENT</p><h2>Everything points<br />back to this hit.</h2></div><div className="transport"><button className="transport-main" onClick={playing ? stop : start}>{playing ? "Ⅱ" : "▶"}</button><div><strong>{dna.bpm} BPM</strong><span>{groove.toUpperCase()} · 4/4 LOOP</span></div></div><button className="export-loop" onClick={exportLoop} disabled={exporting}>{exporting ? "Rendering…" : "Export loop · WAV"}<span>↓</span></button></div>
+        <div className="console-top"><div><p className="kicker"><span>05</span> ONE-SEED ARRANGEMENT</p><h2>Everything points<br />back to this hit.</h2></div><div className="transport"><button className="transport-main" onClick={playing ? stop : start}>{playing ? "Ⅱ" : "▶"}</button><div><strong>{tempo} BPM</strong><span>{groove.toUpperCase()} · {loopBars} BARS · {seedRepetitions} REPEATS</span></div></div><button className="export-loop" onClick={exportLoop} disabled={exporting}>{exporting ? "Rendering…" : "Export loop · WAV"}<span>↓</span></button></div>
         <div className="beat-ruler"><span>TRACK / DERIVATION</span>{Array.from({ length: 16 }, (_, index) => <b key={index}>{index + 1}</b>)}</div>
-        <div className="beat-tracks">{layers.map((layer) => <div className={`beat-track ${layer.muted ? "muted" : ""} ${layer.removed ? "removed" : ""} ${audition === layer.id ? "auditioning" : ""}`} key={layer.id}><div className="beat-track-info"><i style={{ background: layer.color }} /><div><span>{layer.id === "foundation" ? "SOURCE" : "DERIVED"}</span><strong>{layer.name}</strong><small>{layer.derivation}</small></div><div className="mini-controls"><button className={layer.muted ? "active" : ""} onClick={() => muteLayer(layer.id)}>M</button><button className={solo === layer.id ? "active" : ""} onClick={() => setSolo((value) => value === layer.id ? null : layer.id)}>S</button>{layer.id !== "foundation" && <button className={layer.removed ? "active" : ""} onClick={() => removeLayer(layer.id)}>{layer.removed ? "↶" : "×"}</button>}</div></div><div className="beat-lane">{Array.from({ length: 16 }, (_, beat) => <i key={beat} className={`${patternFor(layer.id, groove, synthShape).includes(beat) ? "hit" : ""} ${playing && step === beat ? "playing" : ""}`} style={patternFor(layer.id, groove, synthShape).includes(beat) ? { background: layer.color } : undefined} />)}</div></div>)}</div>
-        <div className="signal-chain"><span>RAW RECORDING</span><i>→</i><span>ISOLATED HIT {String(selectedHit + 1).padStart(2, "0")}</span><i>→</i><span>{pitch > 0 ? "+" : ""}{pitch} ST</span><i>→</i><span>{layers.filter((layer) => !layer.removed).length} LOOP LAYERS</span><b>100% ONE SOURCE</b></div>
+        <div className="beat-tracks">{layers.map((layer) => <div className={`beat-track ${layer.muted ? "muted" : ""} ${layer.removed ? "removed" : ""} ${audition === layer.id ? "auditioning" : ""}`} key={layer.id}><div className="beat-track-info"><i style={{ background: layer.color }} /><div><span>{layer.id === "foundation" ? "SOURCE" : "DERIVED"}</span><strong>{layer.name}</strong><small>{layer.derivation}</small></div><div className="mini-controls"><button className={layer.muted ? "active" : ""} onClick={() => muteLayer(layer.id)}>M</button><button className={solo === layer.id ? "active" : ""} onClick={() => setSolo((value) => value === layer.id ? null : layer.id)}>S</button>{layer.id !== "foundation" && <button className={layer.removed ? "active" : ""} onClick={() => removeLayer(layer.id)}>{layer.removed ? "↶" : "×"}</button>}</div></div><div className="beat-lane">{Array.from({ length: 16 }, (_, beat) => <i key={beat} className={`${displayPattern(layer.id).includes(beat) ? "hit" : ""} ${playing && step % 16 === beat ? "playing" : ""}`} style={displayPattern(layer.id).includes(beat) ? { background: layer.color } : undefined} />)}</div></div>)}</div>
+        <div className="signal-chain"><span>RAW RECORDING</span><i>→</i><span>ISOLATED HIT {String(selectedHit + 1).padStart(2, "0")}</span><i>→</i><span>{pitch > 0 ? "+" : ""}{pitch} ST</span><i>→</i><span>{seedRepetitions} REPEATS × {loopBars} BARS</span><i>→</i><span>{layers.filter((layer) => !layer.removed).length} LOOP LAYERS</span><b>100% ONE SOURCE</b></div>
       </section>
     </section> : null}
     <footer><span>SoundSeed</span><p>One captured beat. Every instrument derived from it.</p><small>ONE BEAT LAB · WEB AUDIO POC</small></footer>
