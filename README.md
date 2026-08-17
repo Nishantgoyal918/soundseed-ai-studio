@@ -31,6 +31,22 @@ No stock drum kit or external sample library is used. The unchanged source hit c
 6. Listen, then keep chatting to reshape the same arrangement.
 7. Export the version you like as a WAV file.
 
+## Example: original beat to generated track
+
+This before-and-after uses SoundSeed's built-in default input: three irregular pen-on-bottle hits. SoundSeed isolates one hit, treats it as the only source material, and transforms it into the generated arrangement.
+
+### 1. Original input
+
+▶ **[Listen to the three irregular source hits](./public/examples/soundseed-default-beat-input.wav?raw=1)**
+
+### 2. Natural-language prompt
+
+> Make something that David Guetta would make.
+
+### 3. Generated result
+
+▶ **[Listen to or download the generated track](./public/examples/soundseed-default-beat-example.wav?raw=1)**
+
 Example first prompt:
 
 > Make it feel like a quiet late-night drive. Start simple, bring in a deep pulse, and let a small glassy melody appear later. Keep it warm and spacious.
